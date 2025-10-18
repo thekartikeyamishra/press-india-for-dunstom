@@ -1,128 +1,216 @@
-import React from 'react';
-import { FaClock, FaExternalLinkAlt, FaBookmark, FaRegBookmark } from 'react-icons/fa';
-import { formatDistanceToNow } from 'date-fns';
+// File: src/components/news/NewsCard.jsx
+
+import React, { useState } from 'react';
+import { motion as Motion } from 'framer-motion';
+import { FaClock, FaUser, FaExternalLinkAlt, FaBookmark, FaRegBookmark } from 'react-icons/fa';
+import { getNewsPlaceholder } from '../../utils/placeholderImage';
 
 const NewsCard = ({ article, viewMode = 'grid' }) => {
-  const [bookmarked, setBookmarked] = React.useState(false);
+  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
-  const timeAgo = formatDistanceToNow(new Date(article.publishedAt), { addSuffix: true });
+  // Format date
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
 
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // Get category color
+  const getCategoryColor = (category) => {
+    const colors = {
+      technology: 'bg-blue-100 text-blue-700',
+      business: 'bg-green-100 text-green-700',
+      sports: 'bg-red-100 text-red-700',
+      entertainment: 'bg-purple-100 text-purple-700',
+      health: 'bg-pink-100 text-pink-700',
+      science: 'bg-cyan-100 text-cyan-700',
+      politics: 'bg-indigo-100 text-indigo-700',
+      general: 'bg-gray-100 text-gray-700'
+    };
+    return colors[category?.toLowerCase()] || colors.general;
+  };
+
+  // Get image URL with fallback
+  const getImageUrl = () => {
+    if (imageError || !article.urlToImage) {
+      return getNewsPlaceholder(article.category || 'News');
+    }
+    return article.urlToImage;
+  };
+
+  // Handle image error
+  const onImageError = () => {
+    setImageError(true);
+  };
+
+  // Handle bookmark
   const handleBookmark = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    setBookmarked(!bookmarked);
+    setIsBookmarked(!isBookmarked);
+    // TODO: Save to Firestore
   };
 
-  const handleCardClick = () => {
-    window.open(article.source.url, '_blank', 'noopener,noreferrer');
+  // Open article
+  const openArticle = () => {
+    if (article.url) {
+      window.open(article.url, '_blank', 'noopener,noreferrer');
+    }
   };
 
   if (viewMode === 'list') {
     return (
-      <div 
-        onClick={handleCardClick}
-        className="bg-white rounded-lg shadow-sm hover:shadow-md transition cursor-pointer p-4 flex gap-4"
+      <Motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        whileHover={{ scale: 1.01 }}
+        className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer"
+        onClick={openArticle}
       >
-        {article.imageUrl && (
-          <img
-            src={article.imageUrl}
-            alt={article.title}
-            className="w-32 h-32 object-cover rounded-lg flex-shrink-0"
-            onError={(e) => {
-              e.target.src = 'https://via.placeholder.com/128x128?text=No+Image';
-            }}
-          />
-        )}
-        
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <h3 className="font-semibold text-lg line-clamp-2 hover:text-primary transition">
+        <div className="flex gap-4 p-4">
+          {/* Image */}
+          <div className="w-48 h-32 flex-shrink-0">
+            <img
+              src={getImageUrl()}
+              alt={article.title}
+              onError={onImageError}
+              className="w-full h-full object-cover rounded-lg"
+              loading="lazy"
+            />
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 flex flex-col">
+            {/* Category and Bookmark */}
+            <div className="flex justify-between items-start mb-2">
+              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(article.category)}`}>
+                {article.category || 'General'}
+              </span>
+              <button
+                onClick={handleBookmark}
+                className="text-gray-400 hover:text-primary transition-colors"
+              >
+                {isBookmarked ? <FaBookmark className="text-primary" /> : <FaRegBookmark />}
+              </button>
+            </div>
+
+            {/* Title */}
+            <h3 className="text-lg font-bold text-gray-800 mb-2 line-clamp-2 hover:text-primary transition-colors">
               {article.title}
             </h3>
-            <button
-              onClick={handleBookmark}
-              className="text-gray-400 hover:text-primary transition flex-shrink-0"
-            >
-              {bookmarked ? <FaBookmark /> : <FaRegBookmark />}
-            </button>
-          </div>
-          
-          <p className="text-gray-600 text-sm line-clamp-2 mb-3">
-            {article.description}
-          </p>
-          
-          <div className="flex items-center justify-between text-xs text-gray-500">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1">
-                <FaClock />
-                {timeAgo}
-              </span>
-              <span className="px-2 py-1 bg-primary bg-opacity-10 text-primary rounded">
-                {article.category}
-              </span>
+
+            {/* Description */}
+            <p className="text-gray-600 text-sm mb-3 line-clamp-2 flex-1">
+              {article.description || article.content || 'No description available'}
+            </p>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1">
+                  <FaUser className="text-xs" />
+                  <span>{article.source?.name || 'Unknown'}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <FaClock className="text-xs" />
+                  <span>{formatDate(article.publishedAt)}</span>
+                </div>
+              </div>
+              <FaExternalLinkAlt className="text-primary" />
             </div>
-            
-            <div className="flex items-center gap-2 text-gray-400">
-              <span className="text-[10px]">{article.source.attribution}</span>
-              <FaExternalLinkAlt />
-            </div>
+
+            {/* Source Attribution */}
+            {article.source?.name && (
+              <div className="mt-2 text-xs text-gray-400">
+                Source: {article.source.name}
+              </div>
+            )}
           </div>
         </div>
-      </div>
+      </Motion.div>
     );
   }
 
+  // Grid view
   return (
-    <div 
-      onClick={handleCardClick}
-      className="bg-white rounded-lg shadow-sm hover:shadow-md transition cursor-pointer overflow-hidden flex flex-col h-full"
+    <Motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.03 }}
+      className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer"
+      onClick={openArticle}
     >
-      {article.imageUrl && (
-        <div className="relative h-48 overflow-hidden">
-          <img
-            src={article.imageUrl}
-            alt={article.title}
-            className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-            onError={(e) => {
-              e.target.src = 'https://via.placeholder.com/400x200?text=No+Image';
-            }}
-          />
-          <div className="absolute top-2 right-2 bg-white bg-opacity-90 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium">
-            {article.category}
-          </div>
-        </div>
-      )}
-      
-      <div className="p-4 flex-1 flex flex-col">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <h3 className="font-semibold text-lg line-clamp-2 hover:text-primary transition flex-1">
-            {article.title}
-          </h3>
-          <button
-            onClick={handleBookmark}
-            className="text-gray-400 hover:text-primary transition flex-shrink-0"
-          >
-            {bookmarked ? <FaBookmark /> : <FaRegBookmark />}
-          </button>
-        </div>
+      {/* Image */}
+      <div className="relative h-48 overflow-hidden">
+        <img
+          src={getImageUrl()}
+          alt={article.title}
+          onError={onImageError}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
         
-        <p className="text-gray-600 text-sm line-clamp-3 mb-4 flex-1">
-          {article.description}
-        </p>
-        
-        <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t">
-          <span className="flex items-center gap-1">
-            <FaClock />
-            {timeAgo}
+        {/* Category Badge */}
+        <div className="absolute top-3 left-3">
+          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(article.category)}`}>
+            {article.category || 'General'}
           </span>
-          
-          <div className="flex items-center gap-2 text-gray-400">
-            <span className="text-[10px]">{article.source.attribution}</span>
-            <FaExternalLinkAlt />
+        </div>
+
+        {/* Bookmark Button */}
+        <button
+          onClick={handleBookmark}
+          className="absolute top-3 right-3 bg-white bg-opacity-90 p-2 rounded-full shadow-md hover:bg-opacity-100 transition-all"
+        >
+          {isBookmarked ? (
+            <FaBookmark className="text-primary" />
+          ) : (
+            <FaRegBookmark className="text-gray-600" />
+          )}
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="p-4">
+        {/* Title */}
+        <h3 className="text-lg font-bold text-gray-800 mb-2 line-clamp-2 hover:text-primary transition-colors">
+          {article.title}
+        </h3>
+
+        {/* Description */}
+        <p className="text-gray-600 text-sm mb-4 line-clamp-3">
+          {article.description || article.content || 'No description available'}
+        </p>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t">
+          <div className="flex items-center gap-1">
+            <FaUser className="text-xs" />
+            <span className="truncate max-w-[120px]">{article.source?.name || 'Unknown'}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <FaClock className="text-xs" />
+            <span>{formatDate(article.publishedAt)}</span>
           </div>
         </div>
+
+        {/* Source Attribution */}
+        {article.source?.name && (
+          <div className="mt-2 text-xs text-gray-400 text-center border-t pt-2">
+            Source: {article.source.name}
+          </div>
+        )}
       </div>
-    </div>
+    </Motion.div>
   );
 };
 
