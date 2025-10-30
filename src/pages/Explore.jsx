@@ -41,7 +41,7 @@ const safeDateVal = (a) => {
       }
       const d = new Date(p);
       if (!isNaN(d.getTime())) return d;
-    } catch {
+    } catch (e) {
       // ignore and try next
     }
   }
@@ -103,7 +103,7 @@ const Explore = () => {
           const res2 = await svc.getPublishedArticles(limit);
           return Array.isArray(res2) ? res2 : [];
         }
-      } catch {
+      } catch (e) {
         // ignore dynamic import error
       }
       return [];
@@ -211,8 +211,8 @@ const Explore = () => {
               // lightweight debounce: reload once per message
               loadContent(false).catch(() => {});
             }
-          } catch {
-            console.warn("Broadcast parse error");
+          } catch (e) {
+            console.warn("Broadcast parse error", e);
           }
         };
         return bc;
@@ -240,7 +240,7 @@ const Explore = () => {
       (bcRefs.current || []).forEach((c) => {
         try {
           c.close && c.close();
-        } catch {
+        } catch (e) {
           /* ignore */
         }
       });
