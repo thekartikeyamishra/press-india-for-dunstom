@@ -2,26 +2,33 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion as Motion } from 'framer-motion';
-import { useSelector } from 'react-redux';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 import { FaUser, FaEnvelope, FaCheckCircle, FaTimesCircle, FaClock, FaShieldAlt } from 'react-icons/fa';
 import UserVerification from '../components/verification/UserVerification';
 import Loader from '../components/common/Loader';
 
 const Profile = () => {
-  const { user } = useSelector((state) => state.auth);
+  const [user, setUser] = useState(auth.currentUser);
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showVerification, setShowVerification] = useState(false);
 
   // Fetch user data from Firestore
   useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+      setUser(currentUser);
+    });
+
     const fetchUserData = async () => {
-      if (!user?.uid) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser?.uid) {
+        setLoading(false);
+        return;
+      }
 
       try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
         if (userDoc.exists()) {
           setUserData(userDoc.data());
           
@@ -38,7 +45,8 @@ const Profile = () => {
     };
 
     fetchUserData();
-  }, [user]);
+    return () => unsubscribe();
+  }, []);
 
   // Handle verification completion
   const handleVerificationComplete = () => {

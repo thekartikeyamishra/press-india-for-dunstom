@@ -1,95 +1,158 @@
+// src/pages/MyGrievances.jsx
+// ============================================
+// MY GRIEVANCES PAGE - ERROR FREE
+// Fixed: Correct imports from proper locations
+// User's personal grievances dashboard
+// ============================================
+
+// cSpell:ignore upvotes downvotes
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../config/firebase';
-import { getUserGrievances, GRIEVANCE_STATUS } from '../services/grievanceService';
-import toast from 'react-hot-toast';
+
+// ✅ CORRECT: Import configurations from grievanceConfig.js
 import { 
-  FaExclamationTriangle, 
+  GRIEVANCE_STATUS,
+  GRIEVANCE_TIERS,
+  PAYMENT_STATUS,
+  getTierById,
+  getStatusById,
+  formatCurrency,
+  getDaysSinceSubmission
+} from '../config/grievanceConfig';
+
+// ✅ CORRECT: Import service from grievanceService.js
+import grievanceService from '../services/grievanceService';
+
+import { 
   FaPlus,
-  FaClock,
+  FaEye,
+  FaEdit,
+  FaTrash,
   FaCheckCircle,
-  FaTimesCircle,
-  FaHourglassHalf,
-  FaChevronDown,
-  FaChevronUp
+  FaClock,
+  FaThumbsUp,
+  FaThumbsDown,
+  FaExclamationCircle,
+  FaFilter,
+  FaSearch
 } from 'react-icons/fa';
+import toast from 'react-hot-toast';
 
 const MyGrievances = () => {
   const navigate = useNavigate();
   const [grievances, setGrievances] = useState([]);
+  const [filteredGrievances, setFilteredGrievances] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [tierFilter, setTierFilter] = useState('all');
 
   useEffect(() => {
-    loadGrievances();
+    loadUserGrievances();
   }, []);
 
-  const loadGrievances = async () => {
+  useEffect(() => {
+    filterGrievances();
+  }, [grievances, searchTerm, statusFilter, tierFilter]);
+
+  const loadUserGrievances = async () => {
     try {
       setLoading(true);
       const user = auth.currentUser;
       
       if (!user) {
-        navigate('/auth');
+        toast.error('Please login to view your grievances');
+        navigate('/auth?mode=login');
         return;
       }
 
-      const data = await getUserGrievances(user.uid);
-      setGrievances(data);
+      const userGrievances = await grievanceService.getUserGrievances(user.uid);
+      setGrievances(userGrievances);
     } catch (error) {
       console.error('Error loading grievances:', error);
-      toast.error('Failed to load grievances');
+      toast.error('Failed to load your grievances');
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case GRIEVANCE_STATUS.RESOLVED:
-        return <FaCheckCircle className="text-green-500" />;
-      case GRIEVANCE_STATUS.REJECTED:
-        return <FaTimesCircle className="text-red-500" />;
-      case GRIEVANCE_STATUS.IN_REVIEW:
-      case GRIEVANCE_STATUS.INVESTIGATING:
-        return <FaHourglassHalf className="text-yellow-500" />;
-      default:
-        return <FaClock className="text-gray-500" />;
+  const filterGrievances = () => {
+    let filtered = [...grievances];
+
+    // Search filter
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(g => 
+        g.title?.toLowerCase().includes(term) ||
+        g.description?.toLowerCase().includes(term) ||
+        g.department?.toLowerCase().includes(term) ||
+        g.city?.toLowerCase().includes(term)
+      );
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(g => g.status === statusFilter);
+    }
+
+    // Tier filter
+    if (tierFilter !== 'all') {
+      filtered = filtered.filter(g => g.tier === tierFilter);
+    }
+
+    setFilteredGrievances(filtered);
+  };
+
+  const handleDelete = async (grievanceId) => {
+    if (!window.confirm('Are you sure you want to delete this grievance? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await grievanceService.deleteGrievance(grievanceId);
+      toast.success('Grievance deleted successfully');
+      await loadUserGrievances();
+    } catch (error) {
+      console.error('Error deleting grievance:', error);
+      toast.error(error.message || 'Failed to delete grievance');
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case GRIEVANCE_STATUS.RESOLVED:
-        return 'bg-green-100 text-green-800';
-      case GRIEVANCE_STATUS.REJECTED:
-        return 'bg-red-100 text-red-800';
-      case GRIEVANCE_STATUS.IN_REVIEW:
-      case GRIEVANCE_STATUS.INVESTIGATING:
-        return 'bg-yellow-100 text-yellow-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+  const handleClose = async (grievanceId) => {
+    if (!window.confirm('Are you sure you want to close this grievance? Refund will be processed if applicable.')) {
+      return;
+    }
+
+    try {
+      await grievanceService.closeGrievance(grievanceId, 'Closed by user');
+      toast.success('Grievance closed successfully');
+      await loadUserGrievances();
+    } catch (error) {
+      console.error('Error closing grievance:', error);
+      toast.error(error.message || 'Failed to close grievance');
     }
   };
 
-  const getPriorityColor = (priority) => {
-    switch (priority) {
-      case 'critical':
-        return 'bg-red-100 text-red-800';
-      case 'high':
-        return 'bg-orange-100 text-orange-800';
-      case 'medium':
-        return 'bg-yellow-100 text-yellow-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
+  const getStats = () => {
+    return {
+      total: grievances.length,
+      pending: grievances.filter(g => g.status === 'pending').length,
+      active: grievances.filter(g => g.status === 'active').length,
+      inProgress: grievances.filter(g => g.status === 'in_progress').length,
+      resolved: grievances.filter(g => g.status === 'resolved').length,
+      closed: grievances.filter(g => g.status === 'closed').length
+    };
   };
+
+  const stats = getStats();
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-red-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading your grievances...</p>
         </div>
       </div>
@@ -97,183 +160,277 @@ const MyGrievances = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-xl shadow-md p-6 mb-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <FaExclamationTriangle className="text-red-500 text-3xl" />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">My Grievances</h1>
-                <p className="text-gray-600">Track your reported issues</p>
-              </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-red-600 to-orange-600 text-white py-8">
+        <div className="container mx-auto px-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold mb-2">My Grievances</h1>
+              <p className="text-white/90">Track and manage your submitted grievances</p>
             </div>
-
             <button
-              onClick={() => navigate('/grievances/report')}
-              className="flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition"
+              onClick={() => navigate('/grievance/create')}
+              className="flex items-center gap-2 px-6 py-3 bg-white text-red-600 rounded-lg hover:bg-gray-100 font-semibold transition"
             >
-              <FaPlus />
-              Report New Grievance
+              <FaPlus /> Create New Grievance
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Grievances List */}
-        {grievances.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-md p-12 text-center">
-            <FaExclamationTriangle className="text-gray-300 text-6xl mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              No grievances yet
-            </h3>
-            <p className="text-gray-600 mb-6">
-              If you encounter any issues or false information, you can report it here.
-            </p>
-            <button
-              onClick={() => navigate('/grievances/report')}
-              className="bg-primary text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition"
+      {/* Stats Dashboard */}
+      <div className="bg-white border-b py-6">
+        <div className="container mx-auto px-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div className="bg-gray-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-gray-900">{stats.total}</div>
+              <div className="text-sm text-gray-600">Total</div>
+            </div>
+            <div className="bg-yellow-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-yellow-600">{stats.pending}</div>
+              <div className="text-sm text-gray-600">Pending</div>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-blue-600">{stats.active}</div>
+              <div className="text-sm text-gray-600">Active</div>
+            </div>
+            <div className="bg-indigo-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-indigo-600">{stats.inProgress}</div>
+              <div className="text-sm text-gray-600">In Progress</div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-green-600">{stats.resolved}</div>
+              <div className="text-sm text-gray-600">Resolved</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-gray-600">{stats.closed}</div>
+              <div className="text-sm text-gray-600">Closed</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white border-b py-4">
+        <div className="container mx-auto px-4">
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Search */}
+            <div className="flex-1 relative">
+              <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search by title, department, city..."
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            {/* Status Filter */}
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
             >
-              Report an Issue
-            </button>
+              <option value="all">All Statuses</option>
+              {Object.values(GRIEVANCE_STATUS).map(status => (
+                <option key={status.id} value={status.id}>
+                  {status.icon} {status.label}
+                </option>
+              ))}
+            </select>
+
+            {/* Tier Filter */}
+            <select
+              value={tierFilter}
+              onChange={(e) => setTierFilter(e.target.value)}
+              className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
+              <option value="all">All Tiers</option>
+              {Object.values(GRIEVANCE_TIERS).map(tier => (
+                <option key={tier.id} value={tier.id}>
+                  {tier.badge}
+                </option>
+              ))}
+            </select>
+
+            {/* Clear Filters */}
+            {(searchTerm || statusFilter !== 'all' || tierFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setStatusFilter('all');
+                  setTierFilter('all');
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
+
+          <div className="mt-2 text-sm text-gray-600">
+            Showing {filteredGrievances.length} of {grievances.length} grievances
+          </div>
+        </div>
+      </div>
+
+      {/* Grievances List */}
+      <div className="container mx-auto px-4 py-8">
+        {filteredGrievances.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-md p-12 text-center">
+            <FaExclamationCircle className="text-6xl text-gray-300 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-700 mb-2">No Grievances Found</h2>
+            <p className="text-gray-600 mb-6">
+              {grievances.length === 0
+                ? "You haven't created any grievances yet."
+                : "No grievances match your filters."}
+            </p>
+            {grievances.length === 0 && (
+              <button
+                onClick={() => navigate('/grievance/create')}
+                className="px-6 py-3 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg font-semibold hover:shadow-lg transition"
+              >
+                Create Your First Grievance
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
-            {grievances.map((grievance) => (
-              <div
-                key={grievance.id}
-                className="bg-white rounded-xl shadow-md overflow-hidden"
-              >
-                {/* Grievance Header */}
-                <div className="p-6">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-lg font-bold text-gray-900">
-                          {grievance.subject}
-                        </h3>
-                        {getStatusIcon(grievance.status)}
+            {filteredGrievances.map((grievance) => {
+              const tierConfig = getTierById(grievance.tier);
+              const statusConfig = getStatusById(grievance.status);
+              const daysSince = getDaysSinceSubmission(grievance.createdAt);
+              const netVotes = (grievance.upvotes || 0) - (grievance.downvotes || 0);
+
+              return (
+                <div
+                  key={grievance.id}
+                  className="bg-white rounded-lg shadow-md hover:shadow-xl transition-shadow p-6"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-start gap-4 flex-1">
+                      {/* Tier Badge */}
+                      <div>
+                        <span className={`px-3 py-1 ${tierConfig?.bgColor} text-white rounded-full text-xs font-semibold`}>
+                          {tierConfig?.badge}
+                        </span>
                       </div>
-                      <p className="text-sm text-gray-600 mb-2">
-                        Reference: <span className="font-mono font-semibold">{grievance.referenceNumber}</span>
+
+                      {/* Main Content */}
+                      <div className="flex-1">
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">
+                          {grievance.title}
+                        </h3>
+                        <p className="text-gray-600 text-sm line-clamp-2 mb-3">
+                          {grievance.description}
+                        </p>
+
+                        {/* Meta Info */}
+                        <div className="flex flex-wrap gap-4 text-sm text-gray-600">
+                          <span className="flex items-center gap-1">
+                            <FaClock /> {daysSince} days ago
+                          </span>
+                          <span className="capitalize">
+                            {grievance.department}
+                          </span>
+                          <span>
+                            {grievance.city}, {grievance.state}
+                          </span>
+                          <span className="flex items-center gap-2">
+                            <FaThumbsUp className="text-green-600" />
+                            {grievance.upvotes || 0}
+                            <FaThumbsDown className="text-red-600" />
+                            {grievance.downvotes || 0}
+                            <span className="font-semibold">
+                              (Net: {netVotes})
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Status Badge */}
+                    <div>
+                      <span className={`px-3 py-1 bg-${statusConfig?.color}-100 text-${statusConfig?.color}-700 rounded-full text-xs font-semibold whitespace-nowrap`}>
+                        {statusConfig?.icon} {statusConfig?.label}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress Updates */}
+                  {grievance.progressUpdates && grievance.progressUpdates.length > 0 && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                      <p className="text-sm font-semibold text-blue-900 mb-1">Latest Update:</p>
+                      <p className="text-sm text-blue-800">
+                        {grievance.progressUpdates[grievance.progressUpdates.length - 1].message}
+                      </p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        {new Date(grievance.progressUpdates[grievance.progressUpdates.length - 1].timestamp).toLocaleString()}
                       </p>
                     </div>
+                  )}
 
-                    <div className="flex flex-col items-end gap-2">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(grievance.status)}`}>
-                        {grievance.status.replace('_', ' ').toUpperCase()}
+                  {/* Payment Info */}
+                  {grievance.paymentStatus && (
+                    <div className="mb-4 flex items-center gap-2 text-sm">
+                      <span className="text-gray-600">Payment:</span>
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                        grievance.paymentStatus === 'paid' ? 'bg-green-100 text-green-700' :
+                        grievance.paymentStatus === 'refunded' ? 'bg-blue-100 text-blue-700' :
+                        grievance.paymentStatus === 'failed' ? 'bg-red-100 text-red-700' :
+                        'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {grievance.paymentStatus?.toUpperCase()}
                       </span>
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPriorityColor(grievance.priority)}`}>
-                        {grievance.priority.toUpperCase()} PRIORITY
-                      </span>
+                      {grievance.paymentAmount && (
+                        <span className="text-gray-600">
+                          {formatCurrency(grievance.paymentAmount)}
+                        </span>
+                      )}
                     </div>
-                  </div>
+                  )}
 
-                  <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 mb-3">
-                    <span>Type: <span className="font-medium">{grievance.type.replace('_', ' ')}</span></span>
-                    <span>Filed: {new Date(grievance.submittedAt).toLocaleDateString()}</span>
-                    {grievance.acknowledgedAt && (
-                      <span>Acknowledged: {new Date(grievance.acknowledgedAt).toLocaleDateString()}</span>
+                  {/* Actions */}
+                  <div className="flex gap-3 pt-4 border-t">
+                    <button
+                      onClick={() => navigate(`/grievance/${grievance.id}`)}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm"
+                    >
+                      <FaEye /> View Details
+                    </button>
+
+                    {grievance.status === 'draft' && (
+                      <button
+                        onClick={() => navigate(`/grievance/edit/${grievance.id}`)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition text-sm"
+                      >
+                        <FaEdit /> Edit
+                      </button>
+                    )}
+
+                    {['draft', 'pending'].includes(grievance.status) && (
+                      <button
+                        onClick={() => handleDelete(grievance.id)}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition text-sm"
+                      >
+                        <FaTrash /> Delete
+                      </button>
+                    )}
+
+                    {!['closed', 'resolved', 'rejected'].includes(grievance.status) && (
+                      <button
+                        onClick={() => handleClose(grievance.id)}
+                        className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 transition text-sm"
+                      >
+                        <FaCheckCircle /> Close
+                      </button>
                     )}
                   </div>
-
-                  {/* Toggle Details Button */}
-                  <button
-                    onClick={() => setExpandedId(expandedId === grievance.id ? null : grievance.id)}
-                    className="flex items-center gap-2 text-primary font-medium hover:underline"
-                  >
-                    {expandedId === grievance.id ? (
-                      <>
-                        <FaChevronUp />
-                        Hide Details
-                      </>
-                    ) : (
-                      <>
-                        <FaChevronDown />
-                        View Details
-                      </>
-                    )}
-                  </button>
                 </div>
-
-                {/* Expanded Details */}
-                {expandedId === grievance.id && (
-                  <div className="border-t border-gray-200 p-6 bg-gray-50">
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="font-semibold text-gray-900 mb-2">Description:</h4>
-                        <p className="text-gray-700 whitespace-pre-wrap">{grievance.description}</p>
-                      </div>
-
-                      {grievance.relatedContentUrl && (
-                        <div>
-                          <h4 className="font-semibold text-gray-900 mb-2">Related Content:</h4>
-                          <a
-                            href={grievance.relatedContentUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline break-all"
-                          >
-                            {grievance.relatedContentUrl}
-                          </a>
-                        </div>
-                      )}
-
-                      {grievance.evidence && grievance.evidence.length > 0 && (
-                        <div>
-                          <h4 className="font-semibold text-gray-900 mb-2">Evidence:</h4>
-                          <div className="space-y-2">
-                            {grievance.evidence.map((item, index) => (
-                              <div key={index} className="p-3 bg-white rounded-lg border">
-                                <p className="text-sm font-medium text-gray-900 mb-1">
-                                  {item.type}: {item.description}
-                                </p>
-                                <a
-                                  href={item.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-sm text-blue-600 hover:underline break-all"
-                                >
-                                  {item.url}
-                                </a>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {grievance.adminNotes && grievance.adminNotes.length > 0 && (
-                        <div>
-                          <h4 className="font-semibold text-gray-900 mb-2">Updates:</h4>
-                          <div className="space-y-2">
-                            {grievance.adminNotes.map((note, index) => (
-                              <div key={index} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                <p className="text-sm text-blue-900 mb-1">{note.note}</p>
-                                <p className="text-xs text-blue-700">
-                                  {new Date(note.addedAt).toLocaleString()} - {note.addedBy}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {grievance.resolution && (
-                        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                          <h4 className="font-semibold text-green-900 mb-2">Resolution:</h4>
-                          <p className="text-green-800">{grievance.resolution}</p>
-                          {grievance.resolvedAt && (
-                            <p className="text-xs text-green-700 mt-2">
-                              Resolved on: {new Date(grievance.resolvedAt).toLocaleString()}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
