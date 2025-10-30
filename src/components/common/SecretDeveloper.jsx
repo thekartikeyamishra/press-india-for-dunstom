@@ -1,58 +1,61 @@
-import React, { useEffect, useState } from 'react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
+// File: src/components/common/SecretDeveloper.jsx
+
+import { useEffect } from 'react';
 
 const SecretDeveloper = () => {
-  const [showSignature, setShowSignature] = useState(false);
-  const [keySequence, setKeySequence] = useState('');
-
   useEffect(() => {
-    const handleKeyPress = (e) => {
-      const newSequence = (keySequence + e.key.toUpperCase()).slice(-20);
-      setKeySequence(newSequence);
+    let secretCode = '';
+    const targetCode = 'DUNSTOM';
+    let timeout;
 
-      if (newSequence.includes('VPMSMKM')) {
-        setShowSignature(true);
-        setKeySequence('');
-        setTimeout(() => setShowSignature(false), 5000);
+    const handleKeyPress = (e) => {
+      // Only handle letter keys
+      if (e.key && e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
+        secretCode += e.key.toUpperCase();
+
+        // Clear timeout if exists
+        if (timeout) clearTimeout(timeout);
+
+        // Reset after 2 seconds of no typing
+        timeout = setTimeout(() => {
+          secretCode = '';
+        }, 2000);
+
+        // Check if code matches
+        if (secretCode === targetCode) {
+          console.log('%c🎉 DUNSTOM DEVELOPER MODE ACTIVATED! 🎉', 
+            'background: linear-gradient(to right, #6366f1, #8b5cf6); color: white; padding: 20px; font-size: 20px; font-weight: bold; border-radius: 10px;'
+          );
+          console.log('%c👨‍💻 Developed by: DUNSTOM', 
+            'color: #6366f1; font-size: 16px; font-weight: bold;'
+          );
+          console.log('%c📧 Contact: dunstom@example.com', 
+            'color: #8b5cf6; font-size: 14px;'
+          );
+          console.log('%c🌐 Website: https://dunstom.com', 
+            'color: #6366f1; font-size: 14px;'
+          );
+          
+          // Reset code
+          secretCode = '';
+        }
+
+        // Keep only last 10 characters to prevent memory issues
+        if (secretCode.length > 10) {
+          secretCode = secretCode.slice(-10);
+        }
       }
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [keySequence]);
+    window.addEventListener('keypress', handleKeyPress);
 
-  return (
-    <AnimatePresence>
-      {showSignature && (
-        <Motion.div
-          initial={{ opacity: 0, scale: 0.5, rotate: -10 }}
-          animate={{ opacity: 1, scale: 1, rotate: 0 }}
-          exit={{ opacity: 0, scale: 0.5, rotate: 10 }}
-          className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none"
-        >
-          <Motion.div 
-            className="bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 text-white px-12 py-8 rounded-2xl shadow-2xl"
-            animate={{ 
-              boxShadow: [
-                '0 0 20px rgba(147, 51, 234, 0.5)',
-                '0 0 40px rgba(236, 72, 153, 0.5)',
-                '0 0 20px rgba(147, 51, 234, 0.5)',
-              ]
-            }}
-            transition={{ duration: 2, repeat: Infinity }}
-          >
-            <Motion.h1 
-              className="text-4xl font-bold text-center"
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ duration: 1, repeat: Infinity }}
-            >
-              🚀 Developed by Kartikeya Mishra 🚀
-            </Motion.h1>
-          </Motion.div>
-        </Motion.div>
-      )}
-    </AnimatePresence>
-  );
+    return () => {
+      window.removeEventListener('keypress', handleKeyPress);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, []);
+
+  return null;
 };
 
 export default SecretDeveloper;
