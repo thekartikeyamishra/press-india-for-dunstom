@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "press-india-dunstom"
-  }
+    "default": "press-india-dunstom",
+    "pid": "press-india-dunstom"
+  },
+  "targets": {},
+  "etags": {}
 }
