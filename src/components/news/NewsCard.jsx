@@ -1,216 +1,695 @@
-// File: src/components/news/NewsCard.jsx
+// src/components/news/NewsCard.jsx
+// ============================================
+// NEWS CARD COMPONENT - Production Ready
+// Displays news article with proper error handling
+// ============================================
+/*
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FaClock, FaUser, FaExternalLinkAlt, FaBook, FaHeart, FaRegHeart, FaEye } from 'react-icons/fa';
+import { auth } from '../../config/firebase';
+import { likeArticle } from '../../services/articleService';
+import toast from 'react-hot-toast';
 
-import React, { useState } from 'react';
-import { motion as Motion } from 'framer-motion';
-import { FaClock, FaUser, FaExternalLinkAlt, FaBookmark, FaRegBookmark } from 'react-icons/fa';
-import { getNewsPlaceholder } from '../../utils/placeholderImage';
+const DEFAULT_IMAGE = 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&q=80';
 
 const NewsCard = ({ article, viewMode = 'grid' }) => {
-  const [isBookmarked, setIsBookmarked] = useState(false);
+  const navigate = useNavigate();
   const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
+  const [liked, setLiked] = useState(false);
+  const [likes, setLikes] = useState(article?.likes || 0);
+  const [liking, setLiking] = useState(false);
+  
+  const isUserArticle = article?.type === 'user';
 
-  // Format date
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+  // Check if user has liked this article
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (user && article?.likedBy) {
+      setLiked(article.likedBy.includes(user.uid));
+    }
+    setLikes(article?.likes || 0);
+  }, [article]);
 
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  // Safely extract source name - handle ALL possible formats
+  const getSourceName = () => {
+    if (!article || !article.source) {
+      return 'Press India';
+    }
+    
+    // If source is an object (from some APIs), extract the name
+    if (typeof article.source === 'object' && article.source !== null) {
+      return article.source.name || article.source.id || 'Press India';
+    }
+    
+    // If source is already a string, return it
+    if (typeof article.source === 'string') {
+      return article.source;
+    }
+    
+    return 'Press India';
   };
 
-  // Get category color
-  const getCategoryColor = (category) => {
-    const colors = {
-      technology: 'bg-blue-100 text-blue-700',
-      business: 'bg-green-100 text-green-700',
-      sports: 'bg-red-100 text-red-700',
-      entertainment: 'bg-purple-100 text-purple-700',
-      health: 'bg-pink-100 text-pink-700',
-      science: 'bg-cyan-100 text-cyan-700',
-      politics: 'bg-indigo-100 text-indigo-700',
-      general: 'bg-gray-100 text-gray-700'
-    };
-    return colors[category?.toLowerCase()] || colors.general;
-  };
-
-  // Get image URL with fallback
+  // Get valid image URL with proper error handling
   const getImageUrl = () => {
-    if (imageError || !article.urlToImage) {
-      return getNewsPlaceholder(article.category || 'News');
+    // If there was an error loading the image, use default
+    if (imageError) {
+      return DEFAULT_IMAGE;
     }
-    return article.urlToImage;
+    
+    // If article doesn't have an image, use default
+    if (!article || !article.urlToImage) {
+      return DEFAULT_IMAGE;
+    }
+    
+    // Validate the URL format
+    const url = article.urlToImage;
+    if (typeof url !== 'string' || url.trim() === '') {
+      return DEFAULT_IMAGE;
+    }
+    
+    // Check if URL starts with http/https
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return DEFAULT_IMAGE;
+    }
+    
+    return url;
   };
 
-  // Handle image error
-  const onImageError = () => {
-    setImageError(true);
+  // Handle image load error
+  const handleImageError = () => {
+    if (!imageError) {
+      console.warn(`Image failed to load for article: ${article?.title || 'Unknown'}`);
+      setImageError(true);
+      setImageLoading(false);
+    }
   };
 
-  // Handle bookmark
-  const handleBookmark = (e) => {
-    e.preventDefault();
+  // Handle image load success
+  const handleImageLoad = () => {
+    setImageLoading(false);
+  };
+
+  // Format date to relative time
+  const formatDate = (dateString) => {
+    try {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diff = now - date;
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      
+      if (hours < 1) {
+        const minutes = Math.floor(diff / (1000 * 60));
+        return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+      } else if (hours < 24) {
+        return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+      } else {
+        const days = Math.floor(hours / 24);
+        return `${days} day${days !== 1 ? 's' : ''} ago`;
+      }
+    } catch  {
+      return 'Recently';
+    }
+  };
+
+  // Get author name safely
+  const getAuthorName = () => {
+    if (!article) return 'Press India';
+    return article.author || article.source || 'Press India';
+  };
+
+  // Handle like/unlike
+  const handleLike = async (e) => {
     e.stopPropagation();
-    setIsBookmarked(!isBookmarked);
-    // TODO: Save to Firestore
-  };
-
-  // Open article
-  const openArticle = () => {
-    if (article.url) {
-      window.open(article.url, '_blank', 'noopener,noreferrer');
+    const user = auth.currentUser;
+    if (!user) {
+      toast.error('Please login to like articles');
+      navigate('/auth');
+      return;
+    }
+    if (!isUserArticle) return;
+    try {
+      setLiking(true);
+      const result = await likeArticle(article.id, user.uid);
+      setLikes(result.likes);
+      setLiked(result.liked);
+    } catch (error) {
+      console.error('Error liking article:', error);
+      toast.error('Failed to like article');
+    } finally {
+      setLiking(false);
     }
   };
 
-  if (viewMode === 'list') {
+  // Validate article data
+  if (!article || !article.title) {
+    return null; // Don't render if article is invalid
+  }
+
+  // Grid view layout
+  if (viewMode === 'grid') {
     return (
-      <Motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        whileHover={{ scale: 1.01 }}
-        className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer"
-        onClick={openArticle}
-      >
-        <div className="flex gap-4 p-4">
-          {/* Image */}
-          <div className="w-48 h-32 flex-shrink-0">
-            <img
-              src={getImageUrl()}
-              alt={article.title}
-              onError={onImageError}
-              className="w-full h-full object-cover rounded-lg"
-              loading="lazy"
-            />
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 flex flex-col">
-            {/* Category and Bookmark */}
-            <div className="flex justify-between items-start mb-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(article.category)}`}>
-                {article.category || 'General'}
+      <article className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col h-full">
+        <div className="relative w-full h-48 bg-gray-200 overflow-hidden">
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          )}
+          
+          <img
+            src={getImageUrl()}
+            alt={article.title}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+            className={`w-full h-full object-cover transition-opacity duration-300 ${
+              imageLoading ? 'opacity-0' : 'opacity-100'
+            }`}
+            loading="lazy"
+          />
+          
+          {article.category && (
+            <div className="absolute top-2 left-2">
+              <span className="bg-primary text-white px-3 py-1 rounded-full text-xs font-semibold uppercase">
+                {article.category}
               </span>
-              <button
-                onClick={handleBookmark}
-                className="text-gray-400 hover:text-primary transition-colors"
-              >
-                {isBookmarked ? <FaBookmark className="text-primary" /> : <FaRegBookmark />}
-              </button>
             </div>
+          )}
 
-            {/* Title */}
-            <h3 className="text-lg font-bold text-gray-800 mb-2 line-clamp-2 hover:text-primary transition-colors">
-              {article.title}
-            </h3>
+          <div className="absolute bottom-2 right-2">
+            <span className="bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs">
+              {getSourceName()}
+            </span>
+          </div>
+        </div>
 
-            {/* Description */}
-            <p className="text-gray-600 text-sm mb-3 line-clamp-2 flex-1">
-              {article.description || article.content || 'No description available'}
-            </p>
+        <div className="p-4 flex flex-col flex-grow">
+          <h3 className="text-lg font-bold text-gray-900 mb-2 line-clamp-2 hover:text-primary transition-colors">
+            {article.title}
+          </h3>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between text-xs text-gray-500">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1">
-                  <FaUser className="text-xs" />
-                  <span>{article.source?.name || 'Unknown'}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <FaClock className="text-xs" />
-                  <span>{formatDate(article.publishedAt)}</span>
-                </div>
-              </div>
-              <FaExternalLinkAlt className="text-primary" />
+          <p className="text-gray-600 text-sm mb-4 line-clamp-3 flex-grow">
+            {article.description || 'Click to read full article'}
+          </p>
+
+          <div className="flex items-center justify-between text-xs text-gray-500 mt-auto pt-3 border-t">
+            <div className="flex items-center gap-1">
+              <FaUser className="text-gray-400" />
+              <span className="truncate max-w-[120px]">
+                {getAuthorName()}
+              </span>
             </div>
-
-            {/* Source Attribution */}
-            {article.source?.name && (
-              <div className="mt-2 text-xs text-gray-400">
-                Source: {article.source.name}
+            {article.publishedAt && (
+              <div className="flex items-center gap-1">
+                <FaClock className="text-gray-400" />
+                <span>{formatDate(article.publishedAt)}</span>
               </div>
             )}
           </div>
+
+          {isUserArticle && (
+            <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+              <button
+                onClick={handleLike}
+                disabled={liking}
+                className={`flex items-center gap-1 ${liked ? 'text-red-500' : 'hover:text-red-500'} transition-colors`}
+              >
+                {liked ? <FaHeart /> : <FaRegHeart />}
+                <span>{likes}</span>
+              </button>
+              {article.views !== undefined && (
+                <div className="flex items-center gap-1">
+                  <FaEye />
+                  <span>{article.views}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {isUserArticle ? (
+            <button
+              onClick={() => navigate(`/articles/${article.id}`)}
+              className="mt-3 w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-all flex items-center justify-center gap-2 text-sm font-semibold"
+            >
+              Read Article
+              <FaBook className="text-xs" />
+            </button>
+          ) : article.url && (
+            <a
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 w-full bg-primary text-white py-2 px-4 rounded-lg hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 text-sm font-semibold"
+            >
+              Read Full Article
+              <FaExternalLinkAlt className="text-xs" />
+            </a>
+          )}
         </div>
-      </Motion.div>
+      </article>
     );
   }
 
-  // Grid view
+  // List view layout
   return (
-    <Motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      whileHover={{ scale: 1.03 }}
-      className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer"
-      onClick={openArticle}
-    >
-      {/* Image */}
-      <div className="relative h-48 overflow-hidden">
-        <img
-          src={getImageUrl()}
-          alt={article.title}
-          onError={onImageError}
-          className="w-full h-full object-cover"
-          loading="lazy"
-        />
-        
-        {/* Category Badge */}
-        <div className="absolute top-3 left-3">
-          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getCategoryColor(article.category)}`}>
-            {article.category || 'General'}
-          </span>
-        </div>
-
-        {/* Bookmark Button */}
-        <button
-          onClick={handleBookmark}
-          className="absolute top-3 right-3 bg-white bg-opacity-90 p-2 rounded-full shadow-md hover:bg-opacity-100 transition-all"
-        >
-          {isBookmarked ? (
-            <FaBookmark className="text-primary" />
-          ) : (
-            <FaRegBookmark className="text-gray-600" />
+    <article className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-all duration-300 mb-4">
+      <div className="flex flex-col md:flex-row">
+        <div className="relative w-full md:w-64 h-48 md:h-auto bg-gray-200 flex-shrink-0">
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
           )}
-        </button>
-      </div>
+          
+          <img
+            src={getImageUrl()}
+            alt={article.title}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+            className={`w-full h-full object-cover transition-opacity duration-300 ${
+              imageLoading ? 'opacity-0' : 'opacity-100'
+            }`}
+            loading="lazy"
+          />
+          
+          {article.category && (
+            <div className="absolute top-2 left-2">
+              <span className="bg-primary text-white px-3 py-1 rounded-full text-xs font-semibold uppercase">
+                {article.category}
+              </span>
+            </div>
+          )}
+        </div>
 
-      {/* Content */}
-      <div className="p-4">
-        {/* Title */}
-        <h3 className="text-lg font-bold text-gray-800 mb-2 line-clamp-2 hover:text-primary transition-colors">
-          {article.title}
-        </h3>
+]        <div className="p-6 flex flex-col flex-grow">
+          <h3 className="text-xl font-bold text-gray-900 mb-2 hover:text-primary transition-colors">
+            {article.title}
+          </h3>
 
-        {/* Description */}
-        <p className="text-gray-600 text-sm mb-4 line-clamp-3">
-          {article.description || article.content || 'No description available'}
-        </p>
+          <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+            {article.description || 'Click to read full article'}
+          </p>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t">
-          <div className="flex items-center gap-1">
-            <FaUser className="text-xs" />
-            <span className="truncate max-w-[120px]">{article.source?.name || 'Unknown'}</span>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-4">
+            <div className="flex items-center gap-1">
+              <FaUser className="text-gray-400" />
+              <span>{getAuthorName()}</span>
+            </div>
+            {article.publishedAt && (
+              <div className="flex items-center gap-1">
+                <FaClock className="text-gray-400" />
+                <span>{formatDate(article.publishedAt)}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <span className="text-gray-400">📰</span>
+              <span>{getSourceName()}</span>
+            </div>
+            {isUserArticle && (
+              <>
+                <button
+                  onClick={handleLike}
+                  disabled={liking}
+                  className={`flex items-center gap-1 ${liked ? 'text-red-500' : 'hover:text-red-500'} transition-colors`}
+                >
+                  {liked ? <FaHeart /> : <FaRegHeart />}
+                  <span>{likes}</span>
+                </button>
+                {article.views !== undefined && (
+                  <div className="flex items-center gap-1">
+                    <FaEye />
+                    <span>{article.views}</span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-1">
-            <FaClock className="text-xs" />
-            <span>{formatDate(article.publishedAt)}</span>
+
+          {isUserArticle ? (
+            <button
+              onClick={() => navigate(`/articles/${article.id}`)}
+              className="inline-flex items-center gap-2 bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition-all text-sm font-semibold self-start"
+            >
+              Read Article
+              <FaBook className="text-xs" />
+            </button>
+          ) : article.url && (
+            <a
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-primary text-white py-2 px-6 rounded-lg hover:bg-opacity-90 transition-all text-sm font-semibold self-start"
+            >
+              Read Full Article
+              <FaExternalLinkAlt className="text-xs" />
+            </a>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+};
+
+export default NewsCard;
+*/
+
+// E:\press-india\src\components\news\NewsCard.jsx
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  FaClock,
+  FaUser,
+  FaExternalLinkAlt,
+  FaBook,
+  FaHeart,
+  FaRegHeart,
+  FaEye,
+  FaImage as FaImageIcon,
+} from "react-icons/fa";
+import { auth } from "../../config/firebase";
+import toast from "react-hot-toast";
+import { toggleLikeArticle } from "../../services/articleService"; // <- use the correct exported function
+
+const DEFAULT_IMAGE =
+  "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&q=80";
+
+const safeNumber = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const NewsCard = ({ article = {}, viewMode = "grid" }) => {
+  const navigate = useNavigate();
+  const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
+  const [liked, setLiked] = useState(false);
+  const [likes, setLikes] = useState(safeNumber(article.likes));
+  const [liking, setLiking] = useState(false);
+
+  const isUserArticle = article?.type === "user" || !!article?.userId;
+
+  useEffect(() => {
+    setLikes(safeNumber(article?.likes));
+    try {
+      const user = auth.currentUser;
+      if (user && Array.isArray(article?.likedBy)) {
+        setLiked(article.likedBy.includes(user.uid));
+      } else {
+        setLiked(false);
+      }
+    } catch {
+      setLiked(false);
+    }
+  }, [article]);
+
+  const getSourceName = () => {
+    if (!article) return "Press India";
+    if (article.source && typeof article.source === "string") return article.source;
+    if (article.source && typeof article.source === "object") {
+      return article.source.name || article.source.id || "Press India";
+    }
+    if (article.publisher) return article.publisher;
+    return "Press India";
+  };
+
+  const getImageUrl = () => {
+    if (imageError) return DEFAULT_IMAGE;
+    const candidates = [
+      article.featuredImage,
+      article.imageUrl,
+      article.urlToImage,
+      article.image,
+    ];
+    for (const c of candidates) {
+      if (c && typeof c === "string" && (c.startsWith("http://") || c.startsWith("https://"))) {
+        return c;
+      }
+    }
+    return DEFAULT_IMAGE;
+  };
+
+  const handleImageError = () => {
+    if (!imageError) {
+      setImageError(true);
+      setImageLoading(false);
+      console.warn("NewsCard: image failed for", article?.title || article?.id);
+    }
+  };
+
+  const handleImageLoad = () => setImageLoading(false);
+
+  const formatDate = (dateString) => {
+    try {
+      if (!dateString) return "Recently";
+      const d = typeof dateString === "object" && dateString?.seconds
+        ? new Date(dateString.seconds * 1000)
+        : new Date(dateString);
+      const diff = Date.now() - d.getTime();
+      if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+      if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+      if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+      return `${Math.floor(diff / 86_400_000)}d ago`;
+    } catch {
+      return "Recently";
+    }
+  };
+
+  const getAuthorName = () => {
+    return article.author || article.authorName || article.source || "Press India";
+  };
+
+  const handleLike = async (e) => {
+    e.stopPropagation();
+    const user = auth.currentUser;
+    if (!user) {
+      toast.error("Please login to like articles");
+      navigate("/auth");
+      return;
+    }
+    if (!isUserArticle) {
+      // Only allow liking for user-created articles
+      toast.error("Can't like this item");
+      return;
+    }
+
+    if (!article?.id) {
+      toast.error("Invalid article");
+      return;
+    }
+
+    try {
+      setLiking(true);
+      // toggleLikeArticle(articleId, userId, likeBool)
+      const wantToLike = !liked;
+      const newCount = await toggleLikeArticle(article.id, user.uid, wantToLike);
+      // Our service returns the new like count (number)
+      setLikes(safeNumber(newCount));
+      setLiked(wantToLike);
+    } catch (err) {
+      console.error("Error liking article:", err);
+      toast.error("Failed to update like");
+    } finally {
+      setLiking(false);
+    }
+  };
+
+  if (!article || !article.title) return null;
+
+  // GRID VIEW
+  if (viewMode === "grid") {
+    return (
+      <article className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col h-full">
+        <div className="relative w-full h-48 bg-gray-200 overflow-hidden">
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          )}
+
+          <img
+            src={getImageUrl()}
+            alt={article.title}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+            className={`w-full h-full object-cover transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
+            loading="lazy"
+          />
+
+          {article.category && (
+            <div className="absolute top-2 left-2">
+              <span className="bg-primary text-white px-3 py-1 rounded-full text-xs font-semibold uppercase">
+                {article.category}
+              </span>
+            </div>
+          )}
+
+          <div className="absolute bottom-2 right-2">
+            <span className="bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs">
+              {getSourceName()}
+            </span>
           </div>
         </div>
 
-        {/* Source Attribution */}
-        {article.source?.name && (
-          <div className="mt-2 text-xs text-gray-400 text-center border-t pt-2">
-            Source: {article.source.name}
+        <div className="p-4 flex flex-col flex-grow">
+          <h3 className="text-lg font-bold text-gray-900 mb-2 line-clamp-2">{article.title}</h3>
+
+          <p className="text-gray-600 text-sm mb-4 line-clamp-3 flex-grow">
+            {article.description || article.summary || "Click to read full article"}
+          </p>
+
+          <div className="flex items-center justify-between text-xs text-gray-500 mt-auto pt-3 border-t">
+            <div className="flex items-center gap-1">
+              <FaUser className="text-gray-400" />
+              <span className="truncate max-w-[120px]">{getAuthorName()}</span>
+            </div>
+
+            {article.publishedAt && (
+              <div className="flex items-center gap-1">
+                <FaClock className="text-gray-400" />
+                <span>{formatDate(article.publishedAt)}</span>
+              </div>
+            )}
           </div>
-        )}
+
+          {isUserArticle && (
+            <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+              <button
+                onClick={handleLike}
+                disabled={liking}
+                className={`flex items-center gap-1 ${liked ? "text-red-500" : "hover:text-red-500"} transition-colors`}
+                aria-label={liked ? "Unlike" : "Like"}
+              >
+                {liked ? <FaHeart /> : <FaRegHeart />}
+                <span>{likes}</span>
+              </button>
+
+              {article.views !== undefined && (
+                <div className="flex items-center gap-1">
+                  <FaEye />
+                  <span>{safeNumber(article.views)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {isUserArticle ? (
+            <button
+              onClick={() => navigate(`/articles/${article.id}`)}
+              className="mt-3 w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-all flex items-center justify-center gap-2 text-sm font-semibold"
+            >
+              Read Article <FaBook className="text-xs" />
+            </button>
+          ) : article.url ? (
+            <a
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 w-full bg-primary text-white py-2 px-4 rounded-lg hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 text-sm font-semibold"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Read Full Article <FaExternalLinkAlt className="text-xs" />
+            </a>
+          ) : null}
+        </div>
+      </article>
+    );
+  }
+
+  // LIST VIEW
+  return (
+    <article className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-all duration-300 mb-4">
+      <div className="flex flex-col md:flex-row">
+        <div className="relative w-full md:w-64 h-48 md:h-auto bg-gray-200 flex-shrink-0">
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          )}
+
+          <img
+            src={getImageUrl()}
+            alt={article.title}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+            className={`w-full h-full object-cover transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
+            loading="lazy"
+          />
+
+          {article.category && (
+            <div className="absolute top-2 left-2">
+              <span className="bg-primary text-white px-3 py-1 rounded-full text-xs font-semibold uppercase">
+                {article.category}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 flex flex-col flex-grow">
+          <h3 className="text-xl font-bold text-gray-900 mb-2 hover:text-primary transition-colors">{article.title}</h3>
+
+          <p className="text-gray-600 text-sm mb-4 line-clamp-2">{article.description || article.summary || "Click to read full article"}</p>
+
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 mb-4">
+            <div className="flex items-center gap-1">
+              <FaUser className="text-gray-400" />
+              <span>{getAuthorName()}</span>
+            </div>
+
+            {article.publishedAt && (
+              <div className="flex items-center gap-1">
+                <FaClock className="text-gray-400" />
+                <span>{formatDate(article.publishedAt)}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1">
+              <span className="text-gray-400">📰</span>
+              <span>{getSourceName()}</span>
+            </div>
+
+            {isUserArticle && (
+              <>
+                <button
+                  onClick={handleLike}
+                  disabled={liking}
+                  className={`flex items-center gap-1 ${liked ? "text-red-500" : "hover:text-red-500"} transition-colors`}
+                >
+                  {liked ? <FaHeart /> : <FaRegHeart />}
+                  <span>{likes}</span>
+                </button>
+
+                {article.views !== undefined && (
+                  <div className="flex items-center gap-1">
+                    <FaEye />
+                    <span>{safeNumber(article.views)}</span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {isUserArticle ? (
+            <button
+              onClick={() => navigate(`/articles/${article.id}`)}
+              className="inline-flex items-center gap-2 bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition-all text-sm font-semibold self-start"
+            >
+              Read Article <FaBook className="text-xs" />
+            </button>
+          ) : article.url ? (
+            <a
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-primary text-white py-2 px-6 rounded-lg hover:bg-opacity-90 transition-all text-sm font-semibold self-start"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Read Full Article <FaExternalLinkAlt className="text-xs" />
+            </a>
+          ) : null}
+        </div>
       </div>
-    </Motion.div>
+    </article>
   );
 };
 
