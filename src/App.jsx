@@ -385,9 +385,9 @@ import ArticleEditor from "./components/article/ArticleEditor";
 
 // Admin
 import AdminDashboard from './components/admin/AdminDashboard';
-import AdminGrievances from "./pages/admin/AdminGrievances";
-import AdminArticles from "./pages/admin/AdminArticles";
-import AdminUsers from "./pages/admin/AdminUsers";
+//import AdminGrievances from "./pages/admin/AdminGrievances";
+//import AdminArticles from "./pages/admin/AdminArticles";
+//import AdminUsers from "./pages/admin/AdminUsers";
 import AdminQuickToggle from "./pages/AdminQuickToggle";
 
 // Other Pages
