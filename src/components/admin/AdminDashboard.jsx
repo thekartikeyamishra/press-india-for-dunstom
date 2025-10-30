@@ -1,511 +1,631 @@
-// E:\press-india\src\pages\AdminDashboard.jsx
+// File: src/pages/admin/AdminDashboard.jsx
 // ============================================
-// ADMIN DASHBOARD - Articles + Grievances Management
-// Fixed: All errors resolved
+// ADMIN DASHBOARD - Complete Production Ready
 // ============================================
-
-/* eslint-disable no-unused-vars */
 
 import React, { useState, useEffect } from 'react';
-import { auth, db } from '../config/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { getPendingArticles, approveArticle, rejectArticle } from '../services/articleService';
-import grievanceService from '../services/grievanceService';
-import { FaCheck, FaTimes, FaEye, FaEdit, FaBullhorn, FaNewspaper } from 'react-icons/fa';
+import { useNavigate } from 'react-router-dom';
+import { auth, db } from '../../config/firebase';
+import { collection, query, where, getDocs, orderBy, limit, getCountFromServer } from 'firebase/firestore';
+import {
+  FaUsers,
+  FaFileAlt,
+  FaExclamationTriangle,
+  FaChartLine,
+  FaCheckCircle,
+  FaClock,
+  FaTimes,
+  FaMoneyBillWave,
+  FaEye,
+  FaEdit,
+  FaTrash,
+  FaSearch,
+  FaFilter,
+  FaDownload
+} from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 const AdminDashboard = () => {
-  const [isAdmin, setIsAdmin] = useState(false);
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('articles'); // 'articles' or 'grievances'
-  
-  // Articles state
-  const [articles, setArticles] = useState([]);
-  
-  // Grievances state
-  const [grievances, setGrievances] = useState([]);
-  const [grievanceFilter, setGrievanceFilter] = useState('all');
-  const [selectedGrievance, setSelectedGrievance] = useState(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [updateData, setUpdateData] = useState({
-    status: '',
-    stage: 1,
-    note: ''
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    totalGrievances: 0,
+    totalArticles: 0,
+    pendingGrievances: 0,
+    resolvedGrievances: 0,
+    totalRevenue: 0,
+    todayGrievances: 0,
+    activeUsers: 0
   });
+  const [recentGrievances, setRecentGrievances] = useState([]);
+  const [recentArticles, setRecentArticles] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
 
   useEffect(() => {
-    checkAdminStatus();
+    checkAdminAccess();
   }, []);
 
   useEffect(() => {
-    if (isAdmin && activeTab === 'grievances') {
-      loadGrievances();
+    if (isAdmin) {
+      loadDashboardData();
     }
-  }, [isAdmin, activeTab, grievanceFilter]);
+  }, [isAdmin]);
 
-  const checkAdminStatus = async () => {
+  const checkAdminAccess = async () => {
     try {
       const user = auth.currentUser;
+      
       if (!user) {
-        setLoading(false);
+        toast.error('Please login to access admin panel');
+        navigate('/auth?mode=login&redirect=/admin');
         return;
       }
 
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (userDoc.exists() && userDoc.data().role === 'admin') {
-        setIsAdmin(true);
-        loadPendingArticles();
-        loadGrievances();
+      // Check if user is admin
+      const userDoc = await getDocs(
+        query(collection(db, 'users'), where('uid', '==', user.uid))
+      );
+
+      if (userDoc.empty) {
+        toast.error('User not found');
+        navigate('/');
+        return;
       }
+
+      const userData = userDoc.docs[0].data();
+      
+      if (userData.role !== 'admin') {
+        toast.error('Access denied. Admin privileges required.');
+        navigate('/');
+        return;
+      }
+
+      setIsAdmin(true);
+      console.log('✅ Admin access granted');
+      
     } catch (error) {
-      console.error('Error checking admin status:', error);
+      console.error('Error checking admin access:', error);
+      toast.error('Failed to verify admin access');
+      navigate('/');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPendingArticles = async () => {
+  const loadDashboardData = async () => {
     try {
-      const pending = await getPendingArticles();
-      setArticles(pending);
+      console.log('📊 Loading dashboard data...');
+
+      // Get stats in parallel
+      const [
+        usersCount,
+        grievancesCount,
+        articlesCount,
+        pendingCount,
+        resolvedCount
+      ] = await Promise.all([
+        getCountFromServer(collection(db, 'users')),
+        getCountFromServer(collection(db, 'grievances')),
+        getCountFromServer(collection(db, 'articles')),
+        getCountFromServer(
+          query(collection(db, 'grievances'), where('status', '==', 'pending'))
+        ),
+        getCountFromServer(
+          query(collection(db, 'grievances'), where('status', '==', 'resolved'))
+        )
+      ]);
+
+      // Get today's grievances
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const todayGrievances = await getDocs(
+        query(
+          collection(db, 'grievances'),
+          where('createdAt', '>=', today)
+        )
+      );
+
+      // Get recent grievances
+      const grievancesSnapshot = await getDocs(
+        query(
+          collection(db, 'grievances'),
+          orderBy('createdAt', 'desc'),
+          limit(10)
+        )
+      );
+
+      const grievancesData = grievancesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // Get recent articles
+      const articlesSnapshot = await getDocs(
+        query(
+          collection(db, 'articles'),
+          orderBy('publishedAt', 'desc'),
+          limit(5)
+        )
+      );
+
+      const articlesData = articlesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // Calculate total revenue
+      let totalRevenue = 0;
+      grievancesData.forEach(g => {
+        if (g.paymentAmount && g.paymentStatus === 'completed') {
+          totalRevenue += g.paymentAmount;
+        }
+      });
+
+      setStats({
+        totalUsers: usersCount.data().count,
+        totalGrievances: grievancesCount.data().count,
+        totalArticles: articlesCount.data().count,
+        pendingGrievances: pendingCount.data().count,
+        resolvedGrievances: resolvedCount.data().count,
+        totalRevenue,
+        todayGrievances: todayGrievances.size,
+        activeUsers: usersCount.data().count // Simplified for now
+      });
+
+      setRecentGrievances(grievancesData);
+      setRecentArticles(articlesData);
+
+      console.log('✅ Dashboard data loaded');
+
     } catch (error) {
-      console.error('Error loading articles:', error);
+      console.error('Error loading dashboard data:', error);
+      toast.error('Failed to load dashboard data');
     }
   };
 
-  const loadGrievances = async () => {
-    try {
-      const filters = {
-        includePrivate: true // Admin sees all
-      };
-
-      if (grievanceFilter !== 'all') {
-        filters.status = grievanceFilter;
-      }
-
-      const data = await grievanceService.getGrievances(filters);
-      setGrievances(data);
-    } catch (error) {
-      console.error('Error loading grievances:', error);
-      toast.error('Failed to load grievances');
-    }
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0
+    }).format(amount);
   };
 
-  const handleApproveArticle = async (articleId) => {
-    try {
-      await approveArticle(articleId);
-      toast.success('Article approved!');
-      loadPendingArticles();
-    } catch (error) {
-      toast.error('Failed to approve article');
-    }
-  };
-
-  const handleRejectArticle = async (articleId) => {
-    try {
-      await rejectArticle(articleId, 'Does not meet guidelines');
-      toast.success('Article rejected');
-      loadPendingArticles();
-    } catch (error) {
-      toast.error('Failed to reject article');
-    }
-  };
-
-  const openUpdateModal = (grievance) => {
-    setSelectedGrievance(grievance);
-    setUpdateData({
-      status: grievance.status,
-      stage: grievance.currentStage || 1,
-      note: ''
+  const formatDate = (date) => {
+    if (!date) return 'N/A';
+    const d = date.toDate ? date.toDate() : new Date(date);
+    return d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
-    setShowUpdateModal(true);
-  };
-
-  const handleUpdateGrievance = async () => {
-    if (!selectedGrievance) return;
-
-    try {
-      // Update status
-      if (updateData.status !== selectedGrievance.status) {
-        await grievanceService.updateStatus(
-          selectedGrievance.id,
-          updateData.status,
-          updateData.note
-        );
-      }
-
-      // Update progress stage
-      if (updateData.stage !== selectedGrievance.currentStage) {
-        await grievanceService.updateProgressStage(
-          selectedGrievance.id,
-          updateData.stage,
-          true,
-          updateData.note
-        );
-      }
-
-      toast.success('Grievance updated successfully!');
-      setShowUpdateModal(false);
-      setSelectedGrievance(null);
-      loadGrievances();
-    } catch (error) {
-      console.error('Error updating grievance:', error);
-      toast.error('Failed to update grievance');
-    }
   };
 
   const getStatusBadge = (status) => {
-    const badges = {
-      draft: { color: 'bg-gray-100 text-gray-800', icon: '📝' },
-      pending: { color: 'bg-yellow-100 text-yellow-800', icon: '⏳' },
-      active: { color: 'bg-green-100 text-green-800', icon: '🔥' },
-      reviewing: { color: 'bg-blue-100 text-blue-800', icon: '👀' },
-      resolved: { color: 'bg-purple-100 text-purple-800', icon: '✅' },
-      rejected: { color: 'bg-red-100 text-red-800', icon: '❌' },
-      closed: { color: 'bg-gray-100 text-gray-800', icon: '🔒' }
+    const statusConfig = {
+      pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', icon: FaClock },
+      'in-review': { bg: 'bg-blue-100', text: 'text-blue-800', icon: FaEye },
+      'in-progress': { bg: 'bg-purple-100', text: 'text-purple-800', icon: FaChartLine },
+      resolved: { bg: 'bg-green-100', text: 'text-green-800', icon: FaCheckCircle },
+      closed: { bg: 'bg-gray-100', text: 'text-gray-800', icon: FaTimes }
     };
 
-    const badge = badges[status] || badges.pending;
+    const config = statusConfig[status] || statusConfig.pending;
+    const Icon = config.icon;
 
     return (
-      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${badge.color}`}>
-        {badge.icon} {status.toUpperCase()}
+      <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
+        <Icon className="text-xs" />
+        {status}
       </span>
     );
   };
 
-  const getPaymentBadge = (status) => {
-    const badges = {
-      pending: { color: 'bg-yellow-100 text-yellow-800', icon: '⏳' },
-      processing: { color: 'bg-blue-100 text-blue-800', icon: '🔄' },
-      completed: { color: 'bg-green-100 text-green-800', icon: '✅' },
-      failed: { color: 'bg-red-100 text-red-800', icon: '❌' },
-      refunded: { color: 'bg-purple-100 text-purple-800', icon: '💰' }
+  const getTierBadge = (tier) => {
+    const tierConfig = {
+      micro: { bg: 'bg-green-500', text: 'Micro' },
+      mini: { bg: 'bg-blue-500', text: 'Mini' },
+      medium: { bg: 'bg-purple-500', text: 'Medium' },
+      mega: { bg: 'bg-orange-500', text: 'Mega' },
+      giga: { bg: 'bg-red-500', text: 'Giga' }
     };
 
-    const badge = badges[status] || badges.pending;
+    const config = tierConfig[tier?.toLowerCase()] || tierConfig.micro;
 
     return (
-      <span className={`px-2 py-1 rounded text-xs font-medium ${badge.color}`}>
-        {badge.icon} {status}
+      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-bold text-white ${config.bg}`}>
+        {config.text}
       </span>
     );
+  };
+
+  const handleViewGrievance = (id) => {
+    navigate(`/make-a-noise/${id}`);
+  };
+
+  const handleEditGrievance = (id) => {
+    navigate(`/admin/grievances/edit/${id}`);
+  };
+
+  const handleViewArticle = (id) => {
+    navigate(`/articles/${id}`);
+  };
+
+  const exportToCSV = () => {
+    try {
+      const csvData = recentGrievances.map(g => ({
+        ID: g.id,
+        Title: g.title,
+        Status: g.status,
+        Tier: g.tier,
+        Amount: g.paymentAmount || 0,
+        Created: formatDate(g.createdAt),
+        User: g.userName
+      }));
+
+      const headers = Object.keys(csvData[0]).join(',');
+      const rows = csvData.map(row => Object.values(row).join(',')).join('\n');
+      const csv = headers + '\n' + rows;
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grievances_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+
+      toast.success('CSV exported successfully');
+    } catch (error) {
+      console.error('Export error:', error);
+      toast.error('Failed to export CSV');
+    }
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-        <p className="text-gray-600">Loading admin dashboard...</p>
-      </div>
-    </div>;
-  }
-
-  if (!isAdmin) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
-          <p className="text-gray-600">You don't have admin permissions</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Verifying admin access...</p>
         </div>
       </div>
     );
   }
 
+  if (!isAdmin) {
+    return null;
+  }
+
+  const filteredGrievances = recentGrievances.filter(g => {
+    const matchesSearch = g.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         g.id?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = filterStatus === 'all' || g.status === filterStatus;
+    return matchesSearch && matchesFilter;
+  });
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="container mx-auto px-4">
-        <h1 className="text-3xl font-bold mb-6">Admin Dashboard</h1>
-        
-        {/* Tab Navigation */}
-        <div className="mb-6 border-b border-gray-200">
-          <nav className="flex gap-4">
-            <button
-              onClick={() => setActiveTab('articles')}
-              className={`pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2
-                ${activeTab === 'articles' 
-                  ? 'border-primary text-primary' 
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-                }
-              `}
-            >
-              <FaNewspaper />
-              Articles ({articles.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('grievances')}
-              className={`pb-4 px-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2
-                ${activeTab === 'grievances' 
-                  ? 'border-primary text-primary' 
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-                }
-              `}
-            >
-              <FaBullhorn />
-              Grievances ({grievances.length})
-            </button>
-          </nav>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
+              <p className="text-sm text-gray-600">Manage grievances, articles, and users</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={exportToCSV}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                <FaDownload /> Export CSV
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+              >
+                Back to Site
+              </button>
+            </div>
+          </div>
         </div>
-
-        {/* Articles Tab */}
-        {activeTab === 'articles' && (
-          <div>
-            <h2 className="text-xl font-semibold mb-4">Pending Articles ({articles.length})</h2>
-            
-            <div className="space-y-4">
-              {articles.map((article) => (
-                <div key={article.id} className="bg-white rounded-lg shadow p-6">
-                  <h3 className="text-lg font-bold mb-2">{article.title}</h3>
-                  <p className="text-gray-600 mb-2">{article.summary || article.description}</p>
-                  <p className="text-sm text-gray-500 mb-4">By: {article.authorName}</p>
-                  
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => handleApproveArticle(article.id)}
-                      className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
-                    >
-                      <FaCheck /> Approve
-                    </button>
-                    <button
-                      onClick={() => handleRejectArticle(article.id)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-                    >
-                      <FaTimes /> Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
-              
-              {articles.length === 0 && (
-                <div className="bg-white rounded-lg shadow p-12 text-center">
-                  <p className="text-gray-600">No pending articles</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Grievances Tab */}
-        {activeTab === 'grievances' && (
-          <div>
-            {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="text-3xl font-bold text-gray-900">{grievances.length}</div>
-                <div className="text-sm text-gray-600 mt-1">Total</div>
-              </div>
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="text-3xl font-bold text-yellow-600">
-                  {grievances.filter(g => g.status === 'pending').length}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">Pending</div>
-              </div>
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="text-3xl font-bold text-green-600">
-                  {grievances.filter(g => g.status === 'active').length}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">Active</div>
-              </div>
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="text-3xl font-bold text-purple-600">
-                  {grievances.filter(g => g.status === 'resolved').length}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">Resolved</div>
-              </div>
-            </div>
-
-            {/* Filters */}
-            <div className="bg-white rounded-lg shadow p-4 mb-6">
-              <div className="flex flex-wrap gap-2">
-                {['all', 'pending', 'active', 'reviewing', 'resolved', 'rejected'].map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => setGrievanceFilter(filter)}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      grievanceFilter === filter
-                        ? 'bg-primary text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Grievances Table */}
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Grievance
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        User
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Status
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Payment
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Tier
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Created
-                      </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {grievances.map((grievance) => (
-                      <tr key={grievance.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-gray-900">{grievance.title}</div>
-                          <div className="text-sm text-gray-500">{grievance.city}, {grievance.state}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-gray-900">{grievance.userName}</div>
-                          <div className="text-sm text-gray-500">{grievance.userEmail}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {getStatusBadge(grievance.status)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {getPaymentBadge(grievance.paymentStatus)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="text-sm font-semibold text-gray-900 uppercase">
-                            {grievance.tier}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {new Date(grievance.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button
-                            onClick={() => openUpdateModal(grievance)}
-                            className="text-primary hover:text-opacity-80 mr-4"
-                          >
-                            <FaEdit className="inline mr-1" /> Update
-                          </button>
-                          <a
-                            href={`/make-a-noise/${grievance.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-gray-600 hover:text-gray-900"
-                          >
-                            <FaEye className="inline mr-1" /> View
-                          </a>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {grievances.length === 0 && (
-                <div className="text-center py-12">
-                  <p className="text-gray-500">No grievances found</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Update Modal */}
-      {showUpdateModal && selectedGrievance && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-6">Update Grievance</h2>
-
-            <div className="space-y-6">
-              {/* Grievance Info */}
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h3 className="font-semibold mb-2">{selectedGrievance.title}</h3>
-                <p className="text-sm text-gray-600">{selectedGrievance.city}, {selectedGrievance.state}</p>
-                <p className="text-sm text-gray-600 mt-1">User: {selectedGrievance.userName}</p>
+      <div className="container mx-auto px-4 py-8">
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Total Grievances */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 bg-blue-100 rounded-lg">
+                <FaExclamationTriangle className="text-2xl text-blue-600" />
               </div>
+              <span className="text-sm text-gray-500">Total</span>
+            </div>
+            <h3 className="text-3xl font-bold text-gray-900 mb-1">{stats.totalGrievances}</h3>
+            <p className="text-sm text-gray-600">Grievances</p>
+            <div className="mt-3 flex items-center gap-2 text-sm">
+              <span className="text-green-600">+{stats.todayGrievances}</span>
+              <span className="text-gray-500">today</span>
+            </div>
+          </div>
 
-              {/* Status */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Status
-                </label>
-                <select
-                  value={updateData.status}
-                  onChange={(e) => setUpdateData({ ...updateData, status: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
-                >
-                  <option value="draft">Draft</option>
-                  <option value="pending">Pending Review</option>
-                  <option value="active">Active</option>
-                  <option value="reviewing">Under Review</option>
-                  <option value="resolved">Resolved</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="closed">Closed</option>
-                </select>
+          {/* Pending Grievances */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 bg-yellow-100 rounded-lg">
+                <FaClock className="text-2xl text-yellow-600" />
               </div>
-
-              {/* Progress Stage */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Progress Stage
-                </label>
-                <select
-                  value={updateData.stage}
-                  onChange={(e) => setUpdateData({ ...updateData, stage: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
-                >
-                  <option value="1">Stage 1: Submitted</option>
-                  <option value="2">Stage 2: Under Review</option>
-                  <option value="3">Stage 3: In Progress</option>
-                  <option value="4">Stage 4: Resolved</option>
-                </select>
-              </div>
-
-              {/* Note */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Update Note (Optional)
-                </label>
-                <textarea
-                  value={updateData.note}
-                  onChange={(e) => setUpdateData({ ...updateData, note: e.target.value })}
-                  placeholder="Add a note about this update (visible to user)..."
-                  rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
+              <span className="text-sm text-gray-500">Pending</span>
+            </div>
+            <h3 className="text-3xl font-bold text-gray-900 mb-1">{stats.pendingGrievances}</h3>
+            <p className="text-sm text-gray-600">Need Review</p>
+            <div className="mt-3">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-yellow-500 h-2 rounded-full transition-all"
+                  style={{ width: `${(stats.pendingGrievances / stats.totalGrievances) * 100}%` }}
                 />
               </div>
+            </div>
+          </div>
 
-              {/* Buttons */}
-              <div className="flex gap-4">
+          {/* Total Revenue */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 bg-green-100 rounded-lg">
+                <FaMoneyBillWave className="text-2xl text-green-600" />
+              </div>
+              <span className="text-sm text-gray-500">Revenue</span>
+            </div>
+            <h3 className="text-3xl font-bold text-gray-900 mb-1">
+              {formatCurrency(stats.totalRevenue)}
+            </h3>
+            <p className="text-sm text-gray-600">Total Collected</p>
+          </div>
+
+          {/* Total Users */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 bg-purple-100 rounded-lg">
+                <FaUsers className="text-2xl text-purple-600" />
+              </div>
+              <span className="text-sm text-gray-500">Users</span>
+            </div>
+            <h3 className="text-3xl font-bold text-gray-900 mb-1">{stats.totalUsers}</h3>
+            <p className="text-sm text-gray-600">Registered</p>
+          </div>
+        </div>
+
+        {/* Quick Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-green-100 rounded-lg">
+                <FaCheckCircle className="text-xl text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Resolved</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.resolvedGrievances}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-100 rounded-lg">
+                <FaFileAlt className="text-xl text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Articles</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalArticles}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-orange-100 rounded-lg">
+                <FaChartLine className="text-xl text-orange-600" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Resolution Rate</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {stats.totalGrievances > 0 
+                    ? Math.round((stats.resolvedGrievances / stats.totalGrievances) * 100)
+                    : 0}%
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Recent Grievances */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow">
+              <div className="p-6 border-b">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-900">Recent Grievances</h2>
+                  <button
+                    onClick={() => navigate('/admin/grievances')}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    View All →
+                  </button>
+                </div>
+
+                {/* Search and Filter */}
+                <div className="flex gap-3">
+                  <div className="flex-1 relative">
+                    <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Search grievances..."
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="in-review">In Review</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="divide-y">
+                {filteredGrievances.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    No grievances found
+                  </div>
+                ) : (
+                  filteredGrievances.map((grievance) => (
+                    <div key={grievance.id} className="p-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            {getTierBadge(grievance.tier)}
+                            {getStatusBadge(grievance.status)}
+                          </div>
+                          <h3 className="font-semibold text-gray-900 mb-1">
+                            {grievance.title}
+                          </h3>
+                          <p className="text-sm text-gray-600 mb-2 line-clamp-1">
+                            {grievance.description}
+                          </p>
+                          <div className="flex items-center gap-4 text-xs text-gray-500">
+                            <span>{grievance.userName || 'Anonymous'}</span>
+                            <span>•</span>
+                            <span>{formatDate(grievance.createdAt)}</span>
+                            <span>•</span>
+                            <span>{formatCurrency(grievance.paymentAmount || 0)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleViewGrievance(grievance.id)}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="View"
+                          >
+                            <FaEye />
+                          </button>
+                          <button
+                            onClick={() => handleEditGrievance(grievance.id)}
+                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <FaEdit />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Recent Articles */}
+          <div>
+            <div className="bg-white rounded-lg shadow">
+              <div className="p-6 border-b">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-gray-900">Recent Articles</h2>
+                  <button
+                    onClick={() => navigate('/admin/articles')}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    View All →
+                  </button>
+                </div>
+              </div>
+
+              <div className="divide-y">
+                {recentArticles.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    No articles yet
+                  </div>
+                ) : (
+                  recentArticles.map((article) => (
+                    <div 
+                      key={article.id} 
+                      className="p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => handleViewArticle(article.id)}
+                    >
+                      <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2">
+                        {article.title}
+                      </h3>
+                      <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                        <span>{article.author}</span>
+                        <span>•</span>
+                        <span>{formatDate(article.publishedAt)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-blue-600">
+                          {article.views || 0} views
+                        </span>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          article.status === 'published' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {article.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quick Actions */}
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <h3 className="font-bold text-gray-900 mb-4">Quick Actions</h3>
+              <div className="space-y-2">
                 <button
-                  onClick={() => {
-                    setShowUpdateModal(false);
-                    setSelectedGrievance(null);
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50"
+                  onClick={() => navigate('/admin/grievances')}
+                  className="w-full text-left px-4 py-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors text-blue-900 font-medium"
                 >
-                  Cancel
+                  Manage Grievances
                 </button>
                 <button
-                  onClick={handleUpdateGrievance}
-                  className="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-medium hover:bg-opacity-90"
+                  onClick={() => navigate('/admin/articles')}
+                  className="w-full text-left px-4 py-3 bg-green-50 hover:bg-green-100 rounded-lg transition-colors text-green-900 font-medium"
                 >
-                  Update Grievance
+                  Manage Articles
+                </button>
+                <button
+                  onClick={() => navigate('/admin/users')}
+                  className="w-full text-left px-4 py-3 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors text-purple-900 font-medium"
+                >
+                  Manage Users
+                </button>
+                <button
+                  onClick={() => navigate('/admin/settings')}
+                  className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors text-gray-900 font-medium"
+                >
+                  Settings
                 </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
