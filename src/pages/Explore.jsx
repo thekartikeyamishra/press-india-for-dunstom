@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { FaFire, FaNewspaper, FaUser, FaClock, FaImage as FaImageIcon } from "react-icons/fa";
 import NewsCard from "../components/news/NewsCard";
-import { getPublishedArticles } from "../services/articleService"; // stable exported fn
+import { getPublishedArticles } from "../services/articleService"; // expected service
 import { getGoogleNews } from "../services/newsService";
 import toast from "react-hot-toast";
 
@@ -18,20 +18,31 @@ const CATEGORIES = [
   { id: "health", name: "Health", icon: "🏥", color: "bg-green-600" },
 ];
 
+// Safely obtain a Date from various possible fields (Firestore Timestamp, ISO string, number)
 const safeDateVal = (a) => {
   if (!a) return null;
   const picks = [a.publishedAt, a.createdAt, a.updatedAt, a.published_at, a.date];
   for (const p of picks) {
     if (!p) continue;
     try {
-      // Firestore timestamp object support (has seconds) and ISO strings
-      if (typeof p === "object" && p !== null && typeof p.seconds === "number") {
-        return new Date(p.seconds * 1000);
+      // Firestore Timestamp (has toDate or seconds)
+      if (typeof p === "object" && p !== null) {
+        if (typeof p.toDate === "function") {
+          return p.toDate();
+        }
+        if (typeof p.seconds === "number") {
+          return new Date(p.seconds * 1000);
+        }
+      }
+      // numeric epoch (ms or s)
+      if (typeof p === "number") {
+        // if p looks like seconds (10 digits) treat as seconds
+        return p > 1e12 ? new Date(p) : new Date(p * 1000);
       }
       const d = new Date(p);
       if (!isNaN(d.getTime())) return d;
     } catch {
-      // ignore
+      // ignore and try next
     }
   }
   return null;
@@ -50,17 +61,22 @@ const sortByNewest = (arr) =>
  * - sort by (likes + views) as a simple trending heuristic
  */
 async function getTrendingArticlesLocal(limit = 20) {
-  const all = (await getPublishedArticles(limit * 3)).slice(0, limit * 3) || [];
-  // compute score
-  const scored = all.map((a) => {
-    const likes = Number(a.likes || 0);
-    const views = Number(a.views || 0);
-    // weight likes higher
-    const score = likes * 3 + views;
-    return { score, article: a };
-  });
-  scored.sort((x, y) => y.score - x.score);
-  return scored.slice(0, limit).map((s) => s.article);
+  try {
+    // try to get a larger pool then pick top-scoring
+    const all = (await getPublishedArticles(limit * 3)) || [];
+    const scored = all.map((a) => {
+      const likes = Number(a.likes || 0);
+      const views = Number(a.views || 0);
+      const score = likes * 3 + views;
+      return { score, article: a };
+    });
+    scored.sort((x, y) => y.score - x.score);
+    return scored.slice(0, limit).map((s) => s.article);
+  } catch (err) {
+    console.error("getTrendingArticlesLocal error:", err);
+    // fallback to empty array so UI doesn't break
+    return [];
+  }
 }
 
 const Explore = () => {
@@ -68,9 +84,34 @@ const Explore = () => {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
-  const bcRef1 = useRef(null);
-  const bcRef2 = useRef(null);
+
+  const bcRefs = useRef([]);
   const pollRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  const safeGetPublished = async (limit = 50) => {
+    // Wrap call to handle different service shapes or failures
+    try {
+      if (typeof getPublishedArticles === "function") {
+        const res = await getPublishedArticles(limit);
+        return Array.isArray(res) ? res : [];
+      }
+      // fallback: try dynamic import (in case service was refactored)
+      try {
+        const svc = await import("../services/articleService");
+        if (typeof svc.getPublishedArticles === "function") {
+          const res2 = await svc.getPublishedArticles(limit);
+          return Array.isArray(res2) ? res2 : [];
+        }
+      } catch {
+        // ignore dynamic import error
+      }
+      return [];
+    } catch (err) {
+      console.error("safeGetPublished error:", err);
+      return [];
+    }
+  };
 
   const loadContent = useCallback(
     async (showToast = true) => {
@@ -79,16 +120,12 @@ const Explore = () => {
         let results = [];
 
         if (activeTab === "trending") {
-          // get trending from local helper (uses getPublishedArticles under the hood)
           const trending = await getTrendingArticlesLocal(20);
           results = (Array.isArray(trending) ? trending : []).map((a) => ({ ...a, type: "user" }));
         } else if (activeTab === "recent") {
-          // fetch user articles (published) and google news in parallel
+          // fetch published user articles + google news in parallel
           const [userArticles, newsArticles] = await Promise.allSettled([
-            getPublishedArticles(50).catch((e) => {
-              console.error("getPublishedArticles error", e);
-              return [];
-            }),
+            safeGetPublished(50),
             getGoogleNews(selectedCategory === "all" ? "general" : selectedCategory).catch((e) => {
               console.error("getGoogleNews error", e);
               return [];
@@ -111,15 +148,12 @@ const Explore = () => {
           results = (Array.isArray(newsArticles) ? newsArticles : []).map((a) => ({ ...a, type: "google" }));
           results = sortByNewest(results);
         } else if (activeTab === "articles") {
-          const userArticles = await getPublishedArticles(50).catch((e) => {
-            console.error("getPublishedArticles error", e);
-            return [];
-          });
+          const userArticles = await safeGetPublished(50);
           results = (Array.isArray(userArticles) ? userArticles : []).map((a) => ({ ...a, type: "user" }));
           results = sortByNewest(results);
         }
 
-        // Client-side category filter (if category selected and tab is relevant)
+        // Category filter (client-side)
         if (selectedCategory !== "all") {
           results = results.filter((r) => {
             const cat = (r.category || "").toLowerCase();
@@ -127,85 +161,100 @@ const Explore = () => {
           });
         }
 
+        // Normalize status field variations (approved / published)
+        results = results.map((r) => {
+          const normalized = { ...r };
+          if (!normalized.status && normalized.approved) {
+            normalized.status = normalized.approved === true ? "published" : "pending";
+          }
+          return normalized;
+        });
+
+        if (!mountedRef.current) return;
         setArticles(results);
       } catch (error) {
         console.error("Error loading content:", error);
         if (showToast) toast.error("Failed to load content");
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     },
     [activeTab, selectedCategory]
   );
 
   useEffect(() => {
-    // initial load + setup BroadcastChannel listeners
+    mountedRef.current = true;
+    // Initial load
     loadContent();
 
-    // listen to both possible channels (some parts of app used "press-india", some "article_updates")
-    try {
-      if ("BroadcastChannel" in window) {
-        bcRef1.current = new BroadcastChannel("press-india");
-        bcRef1.current.onmessage = (ev) => {
+    // Setup BroadcastChannel listeners (multiple channel names handled)
+    const setupBC = (name) => {
+      try {
+        if (typeof window === "undefined") return null;
+        if (!("BroadcastChannel" in window)) return null;
+        const bc = new BroadcastChannel(name);
+        bc.onmessage = (ev) => {
+          const msg = ev?.data || {};
+          // Accept a variety of message types used across admin/tools
+          const triggers = new Set([
+            "article-approved",
+            "article-updated",
+            "article-created",
+            "article_status_changed",
+            "ARTICLE_PUBLISHED",
+            "ARTICLE_UPDATED",
+            "ARTICLE_DELETED",
+            "article_deleted",
+          ]);
           try {
-            const msg = ev.data || {};
-            if (msg && (msg.type === "article-approved" || msg.type === "article-updated" || msg.type === "article-created")) {
-              loadContent();
+            if (msg && (triggers.has(msg.type) || triggers.has(msg?.action) || (msg?.payload && msg.payload.type && triggers.has(msg.payload.type)))) {
+              // lightweight debounce: reload once per message
+              loadContent(false).catch(() => {});
             }
-          } catch (e) {
-            console.warn("BC press-india parse error", e);
+          } catch {
+            console.warn("Broadcast parse error");
           }
         };
-
-        bcRef2.current = new BroadcastChannel("article_updates");
-        bcRef2.current.onmessage = (ev) => {
-          try {
-            const msg = ev.data || {};
-            if (msg && (msg.type === "ARTICLE_PUBLISHED" || msg.type === "ARTICLE_UPDATED" || msg.type === "ARTICLE_DELETED")) {
-              // sync behavior: refresh list
-              loadContent();
-            }
-          } catch (e) {
-            console.warn("BC article_updates parse error", e);
-          }
-        };
+        return bc;
+      } catch (err) {
+        console.warn("BroadcastChannel error", err);
+        return null;
       }
-    } catch (err) {
-      console.warn("BroadcastChannel not available", err);
-    }
+    };
 
-    // fallback poll every 30s
+    const bc1 = setupBC("press-india");
+    const bc2 = setupBC("article_updates");
+    const bc3 = setupBC("app_broadcast");
+
+    // store refs so we can close later
+    bcRefs.current = [bc1, bc2, bc3].filter(Boolean);
+
+    // Poll fallback every 30s (in case BroadcastChannel unsupported)
     pollRef.current = setInterval(() => {
       loadContent(false).catch(() => {});
     }, 30_000);
 
     return () => {
-      if (bcRef1.current) {
+      mountedRef.current = false;
+      // close channels
+      (bcRefs.current || []).forEach((c) => {
         try {
-          bcRef1.current.close();
+          c.close && c.close();
         } catch {
-          // Ignore close errors
+          /* ignore */
         }
-        bcRef1.current = null;
-      }
-      if (bcRef2.current) {
-        try {
-          bcRef2.current.close();
-        } catch {
-          // Ignore close errors
-        }
-        bcRef2.current = null;
-      }
+      });
+      bcRefs.current = [];
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run on mount only
+  }, []); // run once on mount
 
+  // reload when dependencies change
   useEffect(() => {
-    // reload when tab/category changes
     loadContent();
   }, [activeTab, selectedCategory, loadContent]);
 
