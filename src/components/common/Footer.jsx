@@ -78,7 +78,7 @@ const Footer = () => {
           </div>
           
           <div className="text-center text-gray-400 text-sm">
-            <p>&copy; {new Date().getFullYear()} Press India. All rights reserved.</p>
+            <p>&copy; {new Date().getFullYear()} Press India . All rights reserved.</p>
             <p className="mt-2">
               Compliant with IT Act 2000, IT Rules 2021, and Press Council Guidelines
             </p>
